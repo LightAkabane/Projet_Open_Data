@@ -78,12 +78,48 @@ class TMDBClient:
                     "genres": genres,
                     "genres_str": ", ".join(genres),
                     "poster_path": m.get("poster_path"),
+                    "overview": m.get("overview"),  # ⬅️ ajouté
                 }
             )
         return pd.DataFrame(rows)
+
+    def get_movie_recommendations(self, movie_id: int, nb_pages: int = 1) -> List[Dict[str, Any]]:
+        """Recommandations TMDB pour un film donné."""
+        results: List[Dict[str, Any]] = []
+        for page in range(1, nb_pages + 1):
+            data = self._get(f"/movie/{movie_id}/recommendations", params={"page": page})
+            results.extend(data.get("results", []))
+        return results
 
     @staticmethod
     def build_poster_url(poster_path: str | None, size: str = "w342") -> str | None:
         if not poster_path:
             return None
         return f"https://image.tmdb.org/t/p/{size}{poster_path}"
+    
+    def search_movies(
+        self,
+        query: str,
+        year: int | None = None,
+        page: int = 1,
+        include_adult: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Recherche de films par titre.
+        """
+        params: Dict[str, Any] = {
+            "query": query,
+            "page": page,
+            "include_adult": include_adult,
+        }
+        if year:
+            params["year"] = year
+
+        data = self._get("/search/movie", params=params)
+        return data.get("results", [])
+    
+    def get_movie_credits(self, movie_id: int) -> Dict[str, Any]:
+        """
+        Crédits du film : casting, équipe, etc.
+        """
+        return self._get(f"/movie/{movie_id}/credits")

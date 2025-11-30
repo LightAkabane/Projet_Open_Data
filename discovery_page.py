@@ -1,5 +1,5 @@
 # discovery_page.py
-
+import math
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -276,7 +276,7 @@ def render_top10_carousel(df: pd.DataFrame):
 
     critere = st.selectbox(
         "Classer par…",
-        ["Popularité", "Meilleure note", "Plus gros budget"],
+        ["Popularité", "Meilleure note", "Nombre de votes"],
         index=0,
         help="Classement basé sur les attributs TMDB des films actuellement en salle.",
     )
@@ -289,9 +289,8 @@ def render_top10_carousel(df: pd.DataFrame):
         df_top = df[df["vote_count"] >= 20]
         df_top = df_top.sort_values("vote_average", ascending=False).head(10)
 
-    else:
-        st.warning("L'API now_playing ne renvoie pas le budget. Fallback → popularité.")
-        df_top = df.sort_values("popularity", ascending=False).head(10)
+    else:  # "Nombre de votes"
+        df_top = df.sort_values("vote_count", ascending=False).head(10)
 
     # --- construction HTML ---
     cards_html = [TOP10_CSS]
@@ -327,6 +326,7 @@ def render_top10_carousel(df: pd.DataFrame):
                 <div class="movie-metrics">
                     <span class="metric-pill">⭐ {row.vote_average:.1f}</span>
                     <span class="metric-pill">🔥 {row.popularity:.0f}</span>
+                    <span class="metric-pill">🗳️ {row.vote_count}</span>
                 </div>
                 <div class="movie-genres">{genres}</div>
             </div>
@@ -337,7 +337,6 @@ def render_top10_carousel(df: pd.DataFrame):
     cards_html.append("</div></div>")
 
     components.html("".join(cards_html), height=550, scrolling=False)
-
 
 # ===================== Section Data Analyse / Exploration =====================
 
@@ -373,9 +372,12 @@ def render_exploration_section(df: pd.DataFrame):
 
     st.markdown("---")
 
+
     # ---------- DISTRIBUTION DES NOTES ----------
+        # ---------- DISTRIBUTION DES NOTES ----------
     st.markdown("#### 🎯 Distribution des notes TMDB")
 
+    # Histogramme global
     chart_notes = (
         alt.Chart(df_explo)
         .mark_bar()
@@ -398,7 +400,107 @@ def render_exploration_section(df: pd.DataFrame):
         "Classique : ça se concentre souvent entre 6 et 7."
     )
 
-    st.markdown("---")
+    # ---------- Carrousel des films par tranche de notes ----------
+    st.markdown("##### 🔍 Films dans une tranche de notes")
+
+    # Bornes min / max des notes pour caler le slider
+    min_vote = float(df_explo["vote_average"].min())
+    max_vote = float(df_explo["vote_average"].max())
+
+    # On arrondit au 0.5 le plus proche
+    slider_min = math.floor(min_vote * 2) / 2
+    slider_max = math.ceil(max_vote * 2) / 2
+
+    low, high = st.slider(
+        "Sélectionne une tranche de notes",
+        min_value=slider_min,
+        max_value=slider_max,
+        value=(6.0, 7.0),
+        step=0.5,
+        format="%.1f",
+    )
+
+    # Films dans la tranche [low, high)
+    mask = (df_explo["vote_average"] >= low) & (df_explo["vote_average"] < high)
+    df_slice = (
+        df_explo[mask]
+        .sort_values("vote_average", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    st.write(f"🎬 {len(df_slice)} film(s) entre {low:.1f} et {high:.1f} :")
+
+    if df_slice.empty:
+        st.info("Aucun film dans cette tranche de notes.")
+    else:
+        # Construction HTML d'un carrousel horizontal réutilisant le même CSS que le top 10
+        cards_html = [TOP10_CSS]
+        cards_html.append('<div class="top10-container"><div class="top10-scroll">')
+
+        for rank, row in enumerate(df_slice.itertuples(), start=1):
+            poster_url = TMDBClient.build_poster_url(row.poster_path, "w342")
+            genres = ", ".join(row.genres) if isinstance(row.genres, list) else ""
+
+            meta = []
+            if getattr(row, "release_year", None):
+                meta.append(str(row.release_year))
+            if getattr(row, "original_language", None):
+                meta.append(row.original_language.upper())
+            meta_str = " • ".join(meta)
+
+            note = getattr(row, "vote_average", None)
+            votes = getattr(row, "vote_count", None)
+            pop = getattr(row, "popularity", None)
+
+            metrics_html = []
+            if note is not None:
+                metrics_html.append(f"⭐ {note:.1f}")
+            if pop is not None:
+                metrics_html.append(f"🔥 {pop:.0f}")
+            if votes is not None:
+                metrics_html.append(f"🗳️ {votes}")
+            # On laisse 3 pills comme dans le top10
+            metric_pills_html = ""
+            if note is not None:
+                metric_pills_html += f'<span class="metric-pill">⭐ {note:.1f}</span>'
+            if pop is not None:
+                metric_pills_html += f'<span class="metric-pill">🔥 {pop:.0f}</span>'
+            if votes is not None:
+                metric_pills_html += f'<span class="metric-pill">🗳️ {votes}</span>'
+
+            poster_html = ""
+            if poster_url:
+                poster_html = f"""
+                <div class="movie-poster-wrapper">
+                    <img src="{poster_url}" class="movie-poster" />
+                </div>
+                """
+
+            rank_label = f"{note:.1f}" if note is not None else "n/a"
+
+            cards_html.append(
+                f"""
+            <div class="movie-card" data-rank="{rank}">
+                <div class="movie-card-inner">
+                    <div class="movie-rank">⭐ {rank_label}</div>
+                    {poster_html}
+                    <div class="movie-title">{row.title}</div>
+                    <div class="movie-meta">{meta_str}</div>
+                    <div class="movie-metrics">
+                        {metric_pills_html}
+                    </div>
+                    <div class="movie-genres">{genres}</div>
+                </div>
+            </div>
+            """
+            )
+
+        cards_html.append("</div></div>")
+
+        components.html("".join(cards_html), height=550, scrolling=False)
+
+
+
 
     # ---------- PAYS & GENRES ----------
     st.markdown("#### 🌍 Classement par pays & répartition des genres")
@@ -414,7 +516,7 @@ def render_exploration_section(df: pd.DataFrame):
         )
         .reset_index()
         .sort_values("nb_films", ascending=False)
-        .head(12)
+        .head(14)
     )
 
     # --- Deux colonnes : gauche = pays, droite = donut genres ---
@@ -474,7 +576,7 @@ def render_exploration_section(df: pd.DataFrame):
 
     # ======= COLONNE DROITE : DONUT GENRES =======
     with col_right:
-        st.markdown("##### 🥯 Répartition relative des genres (top 12)")
+        st.markdown("##### 🥯 Répartition relative des genres")
 
         if not df_genres_agg.empty:
             df_genres_agg["part"] = (
